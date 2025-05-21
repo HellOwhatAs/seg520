@@ -127,7 +127,7 @@ class UwDataset(Dataset):
         return subset
 
 
-def get_train_augmentation(height: int = 360, width: int = 360):
+def get_train_augmentation(height: int = 384, width: int = 384):
     """Add paddings to make image shape divisible by 32"""
     test_transform = [
         A.HorizontalFlip(),
@@ -150,7 +150,7 @@ def get_train_augmentation(height: int = 360, width: int = 360):
     return A.Compose(test_transform)
 
 
-def get_validation_augmentation(height: int = 360, width: int = 360):
+def get_validation_augmentation(height: int = 384, width: int = 384):
     """Add paddings to make image shape divisible by 32"""
     test_transform = [
         A.Resize(height=height, width=width),
