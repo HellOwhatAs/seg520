@@ -11,7 +11,7 @@ import glob
 import re
 
 
-def extract_glob_stars(pattern: str, text: str):
+def extract_glob_stars(pattern: str, text: str) -> tuple[str, ...]:
     parts = pattern.split("*")
     escaped = list(map(re.escape, parts))
     regex = "^" + "(.*)".join(escaped) + "$"
@@ -69,8 +69,8 @@ class UwDataset(Dataset):
 
     def __init__(
         self,
-        images_pattern: str = "../input/train_images/",
-        csv_path: str = "../input/train.csv",
+        images_pattern: str = "train/case*/case*_day*/scans/slice_*_*_*_*_*.png",
+        csv_path: str = "train.csv",
         label2id: dict[str, int] = None,
         augmentation: A.BaseCompose = None,
     ):
