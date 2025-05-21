@@ -62,9 +62,9 @@ def mask2pixels(mask: np.ndarray, class_id: int = 1) -> List[int]:
 
 class UwDataset(Dataset):
     LABEL2ID = {
-        "large_bowel": 0,
-        "small_bowel": 1,
-        "stomach": 2,
+        "large_bowel": 1,
+        "small_bowel": 2,
+        "stomach": 3,
     }
 
     def __init__(
@@ -97,29 +97,24 @@ class UwDataset(Dataset):
         assert height == int(h) and width == int(w)
         image_id = f"case{case}_day{day}_slice_{slice}"
 
-        mask: np.ndarray = np.zeros(
-            (height, width, len(self.label2id)), dtype=image.dtype
-        )
+        mask: np.ndarray = np.zeros((height, width), dtype=image.dtype)
 
         for _, class_id, encoded_pixels in self.df.filter(
             polars.col("id") == image_id
         ).iter_rows():
             if encoded_pixels is None:
                 continue
-            mask[:, :, self.label2id[class_id]] = pixels2mask(
+            mask = pixels2mask(
                 List(map(int, str.split(encoded_pixels))),
-                mask[:, :, self.label2id[class_id]],
-            )
-            assert (
-                " ".join(map(str, mask2pixels(mask[:, :, self.label2id[class_id]])))
-                == encoded_pixels
+                mask,
+                class_id=self.label2id[class_id],
             )
 
         if self.augmentation:
             sample = self.augmentation(image=image, mask=mask)
             image, mask = sample["image"], sample["mask"]
 
-        return np.expand_dims(image, axis=0), mask.transpose(2, 0, 1)
+        return np.expand_dims(image, axis=0), mask
 
     def subset(self, indices: list[int]):
         subset = deepcopy(self)
@@ -136,10 +131,8 @@ def get_train_augmentation(height: int = 384, width: int = 384):
             [
                 A.Compose(
                     [
-                        A.PadIfNeeded(
-                            min_height=height, min_width=width, always_apply=True
-                        ),
-                        A.RandomCrop(height=height, width=width, always_apply=True),
+                        A.PadIfNeeded(min_height=height, min_width=width),
+                        A.RandomCrop(height=height, width=width),
                     ]
                 ),
                 A.Resize(height=height, width=width),
@@ -162,19 +155,19 @@ if __name__ == "__main__":
     dataset = UwDataset(
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train/case*/case*_day*/scans/slice_*_*_*_*_*.png",
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train.csv",
-        augmentation=get_train_augmentation(),
+        augmentation=get_validation_augmentation(),
     )
 
-    for fpath, (img, mask) in zip(dataset.image_paths, dataset):
-        print(fpath)
+    for img, mask in dataset:
+        mask_bgr = cv2.merge([np.astype(mask == (i + 1), np.uint8) for i in range(3)])
         cv2.imshow(
             "img",
             cv2.addWeighted(
-                np.permute_dims(mask * 255, (1, 2, 0)),
+                mask_bgr * 255,
                 0.3,
                 cv2.cvtColor(cv2.equalizeHist(img[0]), cv2.COLOR_GRAY2BGR),
                 0.7,
                 0,
             ),
         )
-        cv2.waitKey(1)
+        cv2.waitKey(0)

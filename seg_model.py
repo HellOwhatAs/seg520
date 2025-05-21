@@ -1,11 +1,11 @@
-import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
-import torch
+import pytorch_lightning as pl
 from torch.optim import lr_scheduler
+import torch
 
 
-class MultiLabelSegmentModule(pl.LightningModule):
-    def __init__(self, arch, encoder_name, in_channels, out_classes, **kwargs):
+class SegModel(pl.LightningModule):
+    def __init__(self, arch, encoder_name, in_channels, out_classes, t_max, **kwargs):
         super().__init__()
         self.model = smp.create_model(
             arch,
@@ -14,23 +14,26 @@ class MultiLabelSegmentModule(pl.LightningModule):
             classes=out_classes,
             **kwargs,
         )
+        self.t_max = t_max
+        self.number_of_classes = out_classes
 
         params = smp.encoders.get_preprocessing_params(encoder_name)
-        self.number_of_classes = out_classes
         self.std: torch.Tensor
         self.register_buffer("std", torch.tensor(params["std"]).mean())
         self.mean: torch.Tensor
         self.register_buffer("mean", torch.tensor(params["mean"]).mean())
 
-        self.loss_fn = smp.losses.DiceLoss(
-            smp.losses.MULTILABEL_MODE, from_logits=False
-        )
+        # Loss function for multi-class segmentation
+        self.mode = smp.losses.MULTICLASS_MODE
+        self.loss_fn = smp.losses.DiceLoss(self.mode, from_logits=True)
 
+        # Step metrics tracking
         self.training_step_outputs = []
         self.validation_step_outputs = []
         self.test_step_outputs = []
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def forward(self, image) -> torch.Tensor:
+        # Normalize image
         image = (image - self.mean) / self.std
         mask = self.model(image)
         return mask
@@ -43,29 +46,65 @@ class MultiLabelSegmentModule(pl.LightningModule):
         # Ensure that image dimensions are correct
         assert image.ndim == 4  # [batch_size, channels, H, W]
 
-        # Mask shape
-        assert mask.ndim == 4  # [batch_size, channels, H, W]
+        # Ensure the mask is a long (index) tensor
+        mask = mask.long()
 
-        # Predict mask
-        pred_mask = self.forward(image)
+        # Mask shape
+        assert mask.ndim == 3  # [batch_size, H, W]
+
+        # Predict mask logits
+        logits_mask = self.forward(image)
 
         assert (
-            pred_mask.shape[1] == self.number_of_classes
+            logits_mask.shape[1] == self.number_of_classes
         )  # [batch_size, number_of_classes, H, W]
 
         # Ensure the logits mask is contiguous
-        pred_mask = pred_mask.contiguous()
+        logits_mask = logits_mask.contiguous()
 
         # Compute loss using multi-class Dice loss (pass original mask, not one-hot encoded)
-        loss = self.loss_fn(pred_mask, mask)
+        loss = self.loss_fn(logits_mask, mask)
 
-        return {"loss": loss}
+        # Apply softmax to get probabilities for multi-class segmentation
+        prob_mask = logits_mask.softmax(dim=1)
 
-    def shared_epoch_end(self, outputs: list[dict[str, torch.Tensor]], stage):
-        losses = torch.tensor([x["loss"].item() for x in outputs])
-        metrics = {
-            f"{stage}_diceloss": losses.mean().item(),
+        # Convert probabilities to predicted class labels
+        pred_mask = prob_mask.argmax(dim=1)
+
+        # Compute true positives, false positives, false negatives, and true negatives
+        tp, fp, fn, tn = smp.metrics.get_stats(
+            (pred_mask - 1),
+            (mask - 1),
+            mode=self.mode,
+            num_classes=(self.number_of_classes - 1),
+        )
+
+        return {
+            "loss": loss,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "tn": tn,
         }
+
+    def shared_epoch_end(self, outputs, stage):
+        # Aggregate step metrics
+        tp = torch.cat([x["tp"] for x in outputs])
+        fp = torch.cat([x["fp"] for x in outputs])
+        fn = torch.cat([x["fn"] for x in outputs])
+        tn = torch.cat([x["tn"] for x in outputs])
+
+        # Per-image IoU and dataset IoU calculations
+        per_image_iou = smp.metrics.iou_score(
+            tp, fp, fn, tn, reduction="micro-imagewise"
+        )
+        dataset_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro")
+
+        metrics = {
+            f"{stage}_per_image_iou": per_image_iou,
+            f"{stage}_dataset_iou": dataset_iou,
+        }
+
         self.log_dict(metrics, prog_bar=True)
 
     def training_step(self, batch, batch_idx):
@@ -96,8 +135,10 @@ class MultiLabelSegmentModule(pl.LightningModule):
         self.test_step_outputs.clear()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters())
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        scheduler = lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.t_max, eta_min=1e-5
+        )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {

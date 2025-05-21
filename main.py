@@ -1,5 +1,5 @@
 from uw_dataset import UwDataset, get_train_augmentation, get_validation_augmentation
-from seg_model import MultiLabelSegmentModule
+from seg_model import SegModel
 from sklearn.model_selection import KFold
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 def main():
     BATCH_SIZE = 32
-    EPOCHS = 50
+    EPOCHS = 100
     FOLD = 0
 
     dataset = UwDataset(
@@ -30,19 +30,19 @@ def main():
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     valid_dataloader = DataLoader(valid_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    model = MultiLabelSegmentModule(
+    model = SegModel(
         arch="FPN",
         encoder_name="resnet34",
         in_channels=1,
-        out_classes=3,
+        out_classes=4,
         t_max=EPOCHS * len(train_dataloader),
     )
 
     trainer = pl.Trainer(
         max_epochs=EPOCHS,
         callbacks=[
-            ModelCheckpoint(monitor="valid_diceloss", mode="min"),
-            EarlyStopping(monitor="valid_diceloss", mode="min", patience=20),
+            ModelCheckpoint(monitor="valid_dataset_iou", mode="max"),
+            EarlyStopping(monitor="valid_dataset_iou", mode="max", patience=20),
         ],
     )
 
