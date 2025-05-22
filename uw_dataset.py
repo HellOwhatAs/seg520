@@ -83,6 +83,7 @@ class UwDataset(Dataset):
             for i in glob.glob(self.images_pattern)
         ]
         self.df = polars.read_csv(self.csv_path)
+        self.classify: bool = False
 
     def __len__(self):
         return len(self.image_paths)
@@ -114,7 +115,12 @@ class UwDataset(Dataset):
             sample = self.augmentation(image=image, mask=mask)
             image, mask = sample["image"], sample["mask"]
 
-        return np.expand_dims(image, axis=0), mask
+        img: np.ndarray = np.expand_dims(image, axis=0)
+
+        if self.classify:
+            return img, int(mask.max() > 0)
+
+        return img, mask
 
     def subset(self, indices: list[int]):
         subset = deepcopy(self)
