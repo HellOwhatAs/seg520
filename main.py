@@ -37,6 +37,7 @@ def main():
     dataset = UwDataset(
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train/case*/case*_day*/scans/slice_*_*_*_*_*.png",
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train.csv",
+        augmentation=get_train_augmentation(),
     )
 
     kf = KFold(n_splits=5, random_state=42, shuffle=True)
@@ -46,8 +47,6 @@ def main():
         dataset.subset(train_index),
         dataset.subset(valid_index),
     )
-    train_dataset.augmentation = get_train_augmentation()
-    valid_dataset.augmentation = get_validation_augmentation()
     print(len(train_dataset), len(valid_dataset))
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
