@@ -87,7 +87,7 @@ class UwDataset(Dataset):
         z_channel: int = 0,
         z_step: int = 1,
     ):
-        assert z_step <= z_channel and z_channel % z_step == 0
+        assert z_step <= z_channel + 1 and z_channel % z_step == 0
         self.dim25 = z_channel
         self.z_step = z_step
         self.augmentation = augmentation
