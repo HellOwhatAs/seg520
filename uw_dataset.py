@@ -19,6 +19,17 @@ def extract_glob_stars(pattern: str, text: str) -> tuple[str, ...]:
     return m.groups() if m else None
 
 
+def replace_glob_stars(pattern: str, replacements: list[str]) -> str:
+    parts = pattern.split("*")
+    assert len(replacements) == len(parts) - 1
+    result = []
+    for part, rep in zip(parts, replacements):
+        result.append(part)
+        result.append(rep)
+    result.append(parts[-1])
+    return "".join(result)
+
+
 @njit
 def _pixels2mask(mask: np.ndarray, pixels: List[int], class_id: int):
     fill_val = class_id
@@ -73,7 +84,9 @@ class UwDataset(Dataset):
         csv_path: str = "train.csv",
         label2id: dict[str, int] = None,
         augmentation: A.BaseCompose = None,
+        z_channel: int | None = None,
     ):
+        self.dim25 = z_channel
         self.augmentation = augmentation
         self.label2id = label2id if label2id is not None else self.LABEL2ID
         self.images_pattern = images_pattern.replace("\\", "/")
@@ -90,14 +103,30 @@ class UwDataset(Dataset):
 
     def __getitem__(self, idx: int):
         image_path = self.image_paths[idx]
-        image: np.ndarray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        (_, case, day, slice, w, h, _, _) = extract_glob_stars(
+        (_, case, day, slice, w, h, a, b) = extract_glob_stars(
             self.images_pattern, image_path
         )
+        image: np.ndarray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         height, width = image.shape
         assert height == int(h) and width == int(w)
-        image_id = f"case{case}_day{day}_slice_{slice}"
 
+        if self.dim25 is not None:
+            slice_i = int(slice)
+            images = []
+            for i in range(slice_i - self.dim25, slice_i + self.dim25 + 1):
+                path_i = replace_glob_stars(
+                    self.images_pattern, [case, case, day, str(i).zfill(4), w, h, a, b]
+                )
+                images.append(
+                    cv2.imread(path_i, cv2.IMREAD_GRAYSCALE)
+                    if os.path.exists(path_i)
+                    else np.zeros_like(image)
+                )
+            image = np.stack(images, axis=0)
+        else:
+            image = np.expand_dims(image, axis=0)
+
+        image_id = f"case{case}_day{day}_slice_{slice}"
         mask: np.ndarray = np.zeros((height, width), dtype=image.dtype)
 
         for _, class_id, encoded_pixels in self.df.filter(
@@ -112,15 +141,15 @@ class UwDataset(Dataset):
             )
 
         if self.augmentation:
+            image = image.transpose(1, 2, 0)
             sample = self.augmentation(image=image, mask=mask)
             image, mask = sample["image"], sample["mask"]
-
-        img: np.ndarray = np.expand_dims(image, axis=0)
+            image = image.transpose(2, 0, 1)
 
         if self.classify:
-            return img, int(mask.max() > 0)
+            return image, int(mask.max() > 0)
 
-        return img, mask
+        return image, mask
 
     def subset(self, indices: list[int]):
         subset = deepcopy(self)
@@ -162,18 +191,16 @@ if __name__ == "__main__":
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train/case*/case*_day*/scans/slice_*_*_*_*_*.png",
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train.csv",
         augmentation=get_validation_augmentation(),
+        z_channel=1,
     )
 
     for img, mask in dataset:
+        img = cv2.merge([cv2.equalizeHist(img[i]) for i in range(img.shape[0])])
+        if img.shape[2] == 1:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         mask_bgr = cv2.merge([np.astype(mask == (i + 1), np.uint8) for i in range(3)])
         cv2.imshow(
             "img",
-            cv2.addWeighted(
-                mask_bgr * 255,
-                0.3,
-                cv2.cvtColor(cv2.equalizeHist(img[0]), cv2.COLOR_GRAY2BGR),
-                0.7,
-                0,
-            ),
+            cv2.addWeighted(mask_bgr * 255, 0.3, img, 0.7, 0),
         )
         cv2.waitKey(0)
