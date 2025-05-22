@@ -1,4 +1,4 @@
-from uw_dataset import UwDataset, get_train_augmentation, get_validation_augmentation
+from uw_dataset import UwDataset, get_validation_augmentation
 from seg_model import SegModel
 from sklearn.model_selection import KFold
 import pytorch_lightning as pl
@@ -37,7 +37,7 @@ def main():
     dataset = UwDataset(
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train/case*/case*_day*/scans/slice_*_*_*_*_*.png",
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train.csv",
-        augmentation=get_train_augmentation(),
+        augmentation=get_validation_augmentation(),
     )
 
     kf = KFold(n_splits=5, random_state=42, shuffle=True)
