@@ -84,9 +84,12 @@ class UwDataset(Dataset):
         csv_path: str = "train.csv",
         label2id: dict[str, int] = None,
         augmentation: A.BaseCompose = None,
-        z_channel: int | None = None,
+        z_channel: int = 0,
+        z_step: int = 1,
     ):
+        assert z_step <= z_channel and z_channel % z_step == 0
         self.dim25 = z_channel
+        self.z_step = z_step
         self.augmentation = augmentation
         self.label2id = label2id if label2id is not None else self.LABEL2ID
         self.images_pattern = images_pattern.replace("\\", "/")
@@ -110,21 +113,18 @@ class UwDataset(Dataset):
         height, width = image.shape
         assert height == int(h) and width == int(w)
 
-        if self.dim25 is not None:
-            slice_i = int(slice)
-            images = []
-            for i in range(slice_i - self.dim25, slice_i + self.dim25 + 1):
-                path_i = replace_glob_stars(
-                    self.images_pattern, [case, case, day, str(i).zfill(4), w, h, a, b]
-                )
-                images.append(
-                    cv2.imread(path_i, cv2.IMREAD_GRAYSCALE)
-                    if os.path.exists(path_i)
-                    else np.zeros_like(image)
-                )
-            image = np.stack(images, axis=0)
-        else:
-            image = np.expand_dims(image, axis=0)
+        slice_i = int(slice)
+        images = []
+        for i in range(slice_i - self.dim25, slice_i + self.dim25 + 1, self.z_step):
+            path_i = replace_glob_stars(
+                self.images_pattern, [case, case, day, str(i).zfill(4), w, h, a, b]
+            )
+            images.append(
+                cv2.imread(path_i, cv2.IMREAD_GRAYSCALE)
+                if os.path.exists(path_i)
+                else np.zeros_like(image)
+            )
+        image = np.stack(images, axis=0)
 
         image_id = f"case{case}_day{day}_slice_{slice}"
         mask: np.ndarray = np.zeros((height, width), dtype=image.dtype)
@@ -191,11 +191,15 @@ if __name__ == "__main__":
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train/case*/case*_day*/scans/slice_*_*_*_*_*.png",
         "D:/Downloads/uw-madison-gi-tract-image-segmentation/train.csv",
         augmentation=get_validation_augmentation(),
-        z_channel=1,
+        z_channel=2,
+        z_step=2,
     )
 
     for img, mask in dataset:
-        img = cv2.merge([cv2.equalizeHist(img[i]) for i in range(img.shape[0])])
+        if len(np.unique(img)) > 10:
+            img = cv2.merge([cv2.equalizeHist(img[i]) for i in range(img.shape[0])])
+        else:
+            img = np.permute_dims(img * 125, (1, 2, 0))
         if img.shape[2] == 1:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
         mask_bgr = cv2.merge([np.astype(mask == (i + 1), np.uint8) for i in range(3)])
