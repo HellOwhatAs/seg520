@@ -86,7 +86,9 @@ class UwDataset(Dataset):
         augmentation: A.BaseCompose = None,
         z_channel: int = 0,
         z_step: int = 1,
+        without_mask: bool = False,
     ):
+        self.without_mask = without_mask
         assert z_step <= z_channel + 1 and z_channel % z_step == 0
         self.dim25 = z_channel
         self.z_step = z_step
@@ -98,7 +100,11 @@ class UwDataset(Dataset):
             os.path.abspath(i).replace("\\", "/")
             for i in glob.glob(self.images_pattern)
         ]
-        self.df = polars.read_csv(self.csv_path)
+        self.df = (
+            polars.DataFrame(data={"id": []}, schema={"id": str})
+            if self.without_mask
+            else polars.read_csv(self.csv_path)
+        )
         self.classify: bool = False
 
     def __len__(self):
